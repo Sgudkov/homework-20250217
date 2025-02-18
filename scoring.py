@@ -1,7 +1,13 @@
 import random
 
 
-def get_score(store, phone, email, birthday=None, gender=None, first_name=None, last_name=None):
+class ScoreResponseStruct:
+    def __init__(self, score: float):
+        self.score = score
+        self.has = []
+
+
+def get_score(phone, email, birthday=None, gender=None, first_name=None, last_name=None, store=None, is_admin=bool):
     score = 0
     if phone:
         score += 1.5
@@ -11,7 +17,8 @@ def get_score(store, phone, email, birthday=None, gender=None, first_name=None, 
         score += 1.5
     if first_name and last_name:
         score += 0.5
-    return score
+    score = 42 if is_admin else score
+    return ScoreResponseStruct(score).__dict__
 
 
 def get_interests(store, cid):
