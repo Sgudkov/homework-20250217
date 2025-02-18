@@ -4,7 +4,7 @@ import random
 class ScoreResponseStruct:
     def __init__(self, score: float):
         self.score = score
-        self.has = []
+        self.has: list = [str]
 
 
 def get_score(phone, email, birthday=None, gender=None, first_name=None, last_name=None, store=None, is_admin=bool):

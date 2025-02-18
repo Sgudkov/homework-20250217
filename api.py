@@ -74,11 +74,11 @@ class ClientIDsField(CharField):
 
 
 class RequestFieldsParser(object):
-    def __init__(self, args: dict()):
+    def __init__(self, args):
         for key, value in self.__dict__.items():
             self.__dict__[key] = args.setdefault(key, None)
 
-    def get_filled_fields(self) -> []:
+    def get_filled_fields(self) -> list:
         fields = []
         for key, value in self.__dict__.items():
             if not value is None:
