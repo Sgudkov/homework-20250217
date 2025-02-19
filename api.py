@@ -42,7 +42,7 @@ GENDERS = {
 @dataclass
 class CharField(object):
     required: bool
-    nullable: bool = False
+    nullable: bool
 
 
 class ArgumentsField(CharField):
@@ -81,7 +81,7 @@ class RequestFieldsParser(object):
     def get_filled_fields(self) -> list:
         fields = []
         for key, value in self.__dict__.items():
-            if not value is None:
+            if value is not None:
                 fields.append(key)
         return fields[:]
 
@@ -89,7 +89,7 @@ class RequestFieldsParser(object):
 class ClientsInterestsRequest(RequestFieldsParser, object):
 
     def __init__(self, args):
-        self.client_ids = ClientIDsField(required=True)
+        self.client_ids = ClientIDsField(required=True, nullable=True)
         self.date = DateField(required=False, nullable=True)
         super().__init__(args=args)
 
@@ -112,15 +112,19 @@ class OnlineScoreRequest(RequestFieldsParser, object):
 
 
 class MethodRequest(RequestFieldsParser, object):
+    account = CharField(required=False, nullable=True)
+    login = CharField(required=True, nullable=True)
+    token = CharField(required=True, nullable=True)
+    arguments = ArgumentsField(required=True, nullable=True)
+    method = CharField(required=True, nullable=False)
 
     def __init__(self, args):
-        self.account = CharField(required=False, nullable=True)
-        self.login = CharField(required=True, nullable=True)
-        self.token = CharField(required=True, nullable=True)
-        self.arguments = ArgumentsField(required=True, nullable=True)
-        self.method = CharField(required=True, nullable=False)
+        self.account = ''
+        self.login = ''
+        self.token = ''
+        self.arguments = {}
+        self.method = ''
         super().__init__(args=args)
-        v = 1
 
     @property
     def is_admin(self):
@@ -129,59 +133,122 @@ class MethodRequest(RequestFieldsParser, object):
 
 class RequestChecker(object):
 
-    def __init__(self):
-        self.request = None
+    def __init__(self, request):
+        self.request = request
+        try:
+            self.methodRequest = MethodRequest(args=dict(self.request.get("body")))
+        except Exception as e:
+            self.methodRequest = MethodRequest(args={})
+
+    def logging_check(self, response, code):
+        if code != OK:
+            logging.error("%s: %s" % (ERRORS.get(code), response))
+
+    def check_required_fields(self):
+        req_list = self.methodRequest.get_filled_fields()
+        for key, value in MethodRequest.__dict__.items():
+            if hasattr(value, "required") is False:
+                continue
+            if value.required and key not in req_list:
+                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+
+        return '', OK
+
+    def check_online_scoring(self):
+
+        response, code = self.check_score_request()
+        if code != OK:
+            return response, code
+
+        return '', OK
+
+    def check_clients_interests(self):
+        request = self.request.get("body")
+        fields = ClientsInterestsRequest(request.get("arguments"))
+
+        if (fields.client_ids is None or not fields.client_ids) or type(fields.client_ids) != list:
+            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+
+        if all(type(i) == int for i in fields.client_ids) is False:
+            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+
+        if fields.date is not None:
+            try:
+                date_valid = bool(datetime.datetime.strptime(str(fields.date), "%d.%m.%Y"))
+            except ValueError:
+                date_valid = False
+
+            if not date_valid:
+                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+
+        return '', OK
 
     def check_empty_request(self):
-        if self.request is None:
+        try:
+            if not bool(self.request.get("body")):
+                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+        except Exception as e:
             return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+        return '', OK
 
-    def check_bad_auth(self):
-        if check_auth(self.request.get("body")):
+    def check_auth(self):
+        if not check_auth(self.methodRequest):
             return ERRORS.get(FORBIDDEN), FORBIDDEN
+        return '', OK
 
-    def check_invalid_method_request(self):
-        if not self.request.get("method") in ["online_score", "clients_interests"]:
+    def check_method_request(self):
+        if not self.request.get("body").get("method") in ["online_score", "clients_interests"]:
             return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+        return '', OK
 
-    def check_invalid_score_request(self):
-        request = self.request
+    def check_score_request(self):
+        request = self.request.get("body")
+
         fields_dc: OnlineScoreRequest = request.get("arguments")
         if fields_dc is None or bool(fields_dc) is False:
             return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
 
-        fields = OnlineScoreRequest(request.get("arguments"))
+        fields = OnlineScoreRequest(dict(request.get("arguments")))
 
-        if not (fields.phone and fields.email) or not (fields.first_name and fields.last_name) or not (
-                fields.gender and fields.birthday):
+        count_inconsistency = 0
+
+        if fields.phone is None or fields.email is None:
+            count_inconsistency += 1
+        if fields.first_name is None or fields.last_name is None:
+            count_inconsistency += 1
+        if fields.gender is None or fields.birthday is None:
+            count_inconsistency += 1
+
+        if count_inconsistency == 3:
             return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
 
-        if len(fields.phone) != 11 or fields.phone[0] != 7:
+        if not str(fields.first_name).isalpha() or not str(fields.last_name).isalpha():
             return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
 
-        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', fields.email):
+        if (len(str(fields.phone)) != 11 or int(str(fields.phone)[0]) != 7) and fields.phone is not None:
             return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
 
-        format = "%d-%m-%Y"
-        try:
-            date_validate = bool(datetime.datetime.strptime(fields.birthday, format))
-        except ValueError:
-            date_validate = True
-
-        if date_validate:
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if fields.email is not None and not re.match(pattern, str(fields.email)):
             return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
 
-    def check_ok_score_request(self):
-        pass
+        if fields.gender not in [0, 1, 2] and fields.gender is not None:
+            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
 
-    def check_ok_score_admin_request(self):
-        pass
+        if fields.birthday is not None:
 
-    def check_invalid_interests_request(self):
-        pass
+            try:
+                birth_date = datetime.datetime.strptime(str(fields.birthday), "%d.%m.%Y")
+                if datetime.datetime.today().year - birth_date.year >= 70:
+                    return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+                date_valid = bool(birth_date)
+            except ValueError:
+                date_valid = False
 
-    def check_ok_interests_request(self):
-        pass
+            if not date_valid:
+                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+
+        return '', OK
 
 
 def check_auth(request):
@@ -192,77 +259,43 @@ def check_auth(request):
     return digest == request.token
 
 
-def check_method_fields(request):
-    match request.get("method"):
-        case "online_score":
-            fields_dc: OnlineScoreRequest = request.get("arguments")
-            if fields_dc is None or bool(fields_dc) is False:
-                return True
-
-            fields = OnlineScoreRequest(dict(request.get("arguments")))
-
-            if isinstance(fields.phone, PhoneField) and isinstance(fields.email, EmailField):
-                return True
-            elif isinstance(fields.first_name, CharField) and isinstance(fields.last_name, CharField):
-                return True
-            elif isinstance(fields.gender, GenderField) and isinstance(fields.birthday, BirthDayField):
-                return True
-
-            if (len(str(fields.phone)) != 11 or int(str(fields.phone)[0]) != 7) and fields.phone is not None:
-                return True
-
-            if not fields.email is None and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-                                                         fields.email):
-                return True
-
-            if fields.birthday is None: return False
-
-            format = "%d.%m.%Y"
-
-            try:
-                date_valid = bool(datetime.datetime.strptime(fields.birthday, format))
-            except ValueError:
-                date_invalid = False
-
-            if not date_valid:
-                return True
-
-        case "clients_interests":
-            pass
-
-
-def check_request(request):
-    if request is None:
-        return True
-
-    if request.get("method") in ["online_score", "clients_interests"]:
-        return check_method_fields(request)
-    else:
-        return True
-
-
 def method_handler(request, ctx, store):
-    try:
-        r = MethodRequest(args=dict(request.get("body")))
-        if not check_auth(r):
-            response = ERRORS.get(FORBIDDEN)
-            code = FORBIDDEN
-            return response, code
-    except Exception as e:
-        return ERRORS.get(FORBIDDEN), FORBIDDEN
+    checker = RequestChecker(request)
 
-    if check_request(request.get("body")):
-        return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+    response, code = checker.check_empty_request()
+    if code != OK:
+        return response, code
 
-    match r.method:
+    response, code = checker.check_required_fields()
+    if code != OK:
+        return response, code
+
+    response, code = checker.check_auth()
+    if code != OK:
+        return response, code
+
+    response, code = checker.check_method_request()
+    if code != OK:
+        return response, code
+
+    match checker.methodRequest.method:
         case "online_score":
-            s = OnlineScoreRequest(dict(r.arguments))
+            response, code = checker.check_online_scoring()
+            if code != OK:
+                return response, code
+            s = OnlineScoreRequest(args=dict(checker.methodRequest.arguments))
             ctx["has"] = s.get_filled_fields()
             score = get_score(store=None, phone=s.phone, email=s.email, birthday=s.birthday, gender=s.gender,
-                              first_name=s.first_name, last_name=s.last_name, is_admin=check_auth(r))
+                              first_name=s.first_name, last_name=s.last_name,
+                              is_admin=check_auth(checker.methodRequest))
             return score, OK
         case "clients_interests":
-            return get_interests(r.arguments), OK
+            response, code = checker.check_clients_interests()
+            if code != OK:
+                return response, code
+            client_ids = checker.methodRequest.arguments.get("client_ids")
+            ctx["nclients"] = len(client_ids)
+            return get_interests(store=None, cid=client_ids), OK
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
@@ -274,7 +307,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
 
-    def do_POST(self):
+    def do_post(self):
         response, code = {}, OK
         context = {"request_id": self.get_request_id(self.headers)}
         request = None

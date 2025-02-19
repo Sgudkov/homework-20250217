@@ -4,7 +4,14 @@ import random
 class ScoreResponseStruct:
     def __init__(self, score: float):
         self.score = score
-        self.has: list = [str]
+        self.has: list[str]
+
+
+class InterestResponseStruct(object):
+    def __init__(self, cid: list, interest: list):
+        self.resp = {}
+        for i in cid:
+            self.resp[i] = random.sample(interest, len(cid))
 
 
 def get_score(phone, email, birthday=None, gender=None, first_name=None, last_name=None, store=None, is_admin=bool):
@@ -23,4 +30,4 @@ def get_score(phone, email, birthday=None, gender=None, first_name=None, last_na
 
 def get_interests(store, cid):
     interests = ["cars", "pets", "travel", "hi-tech", "sport", "music", "books", "tv", "cinema", "geek", "otus"]
-    return random.sample(interests, 2)
+    return InterestResponseStruct(cid, interests).resp
