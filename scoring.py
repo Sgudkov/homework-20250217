@@ -13,7 +13,16 @@ class InterestResponseStruct(object):
             self.resp[i] = random.sample(interest, len(cid))
 
 
-def get_score(phone, email, birthday=None, gender=None, first_name=None, last_name=None, store=None, is_admin=bool):
+def get_score(
+    phone,
+    email,
+    birthday=None,
+    gender=None,
+    first_name=None,
+    last_name=None,
+    store=None,
+    is_admin=bool,
+):
     score = 0
     if phone:
         score += 1.5
@@ -28,5 +37,17 @@ def get_score(phone, email, birthday=None, gender=None, first_name=None, last_na
 
 
 def get_interests(store, cid):
-    interests = ["cars", "pets", "travel", "hi-tech", "sport", "music", "books", "tv", "cinema", "geek", "otus"]
+    interests = [
+        "cars",
+        "pets",
+        "travel",
+        "hi-tech",
+        "sport",
+        "music",
+        "books",
+        "tv",
+        "cinema",
+        "geek",
+        "otus",
+    ]
     return InterestResponseStruct(cid, interests).resp
