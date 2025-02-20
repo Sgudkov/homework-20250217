@@ -8,6 +8,11 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "mypy (>=1.15.0,<2.0.0)",
+    "pytest (>=8.3.4,<9.0.0)",
+    "black (>=25.1.0,<26.0.0)",
+    "isort (>=6.0.0,<7.0.0)",
+    "pre-commit (>=4.1.0,<5.0.0)",
 ]
 
 
