@@ -6,6 +6,7 @@ import json
 import datetime
 import logging
 import hashlib
+import os
 import re
 import uuid
 from argparse import ArgumentParser
@@ -140,9 +141,14 @@ class RequestChecker(object):
         except Exception as e:
             self.methodRequest = MethodRequest(args={})
 
-    def logging_check(self, response, code):
-        if code != OK:
-            logging.error("%s: %s" % (ERRORS.get(code), response))
+    def get_error_response(self, error_text):
+        class ErrorResponse:
+            def __init__(self, text: str):
+                self.error: str = text
+
+        response = ErrorResponse(error_text).__dict__
+        logging.error(f'Ошибка: {error_text}')
+        return response
 
     def check_required_fields(self):
         req_list = self.methodRequest.get_filled_fields()
@@ -150,7 +156,7 @@ class RequestChecker(object):
             if hasattr(value, "required") is False:
                 continue
             if value.required and key not in req_list:
-                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+                return self.get_error_response(f'Не заполнено обязательное поле: {key}'), INVALID_REQUEST
 
         return '', OK
 
@@ -167,10 +173,10 @@ class RequestChecker(object):
         fields = ClientsInterestsRequest(request.get("arguments"))
 
         if (fields.client_ids is None or not fields.client_ids) or type(fields.client_ids) != list:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Поле client_ids не передано в запросе или пустое'), INVALID_REQUEST
 
         if all(type(i) == int for i in fields.client_ids) is False:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Значения client_ids должны быть числами'), INVALID_REQUEST
 
         if fields.date is not None:
             try:
@@ -179,26 +185,29 @@ class RequestChecker(object):
                 date_valid = False
 
             if not date_valid:
-                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+                return self.get_error_response('Дата должна быть в формате DD.MM.YYYY'), INVALID_REQUEST
 
         return '', OK
 
     def check_empty_request(self):
         try:
             if not bool(self.request.get("body")):
-                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+                return self.get_error_response('Пустой запрос'), INVALID_REQUEST
         except Exception as e:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Пустой запрос'), INVALID_REQUEST
         return '', OK
 
     def check_auth(self):
+        if (self.methodRequest.login is None or self.methodRequest.login == '') or (
+                self.methodRequest.account is None or self.methodRequest.account == ''):
+            return ERRORS.get(FORBIDDEN), FORBIDDEN
         if not check_auth(self.methodRequest):
             return ERRORS.get(FORBIDDEN), FORBIDDEN
         return '', OK
 
     def check_method_request(self):
         if not self.request.get("body").get("method") in ["online_score", "clients_interests"]:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Метода не существует'), INVALID_REQUEST
         return '', OK
 
     def check_score_request(self):
@@ -206,7 +215,7 @@ class RequestChecker(object):
 
         fields_dc: OnlineScoreRequest = request.get("arguments")
         if fields_dc is None or bool(fields_dc) is False:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Структура arguments не передана в запросе'), INVALID_REQUEST
 
         fields = OnlineScoreRequest(dict(request.get("arguments")))
 
@@ -220,33 +229,33 @@ class RequestChecker(object):
             count_inconsistency += 1
 
         if count_inconsistency == 3:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Одна из обязательных пар полей не заполнена'), INVALID_REQUEST
 
         if not str(fields.first_name).isalpha() or not str(fields.last_name).isalpha():
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Поле имени или фамилии содержит недопустимые символы'), INVALID_REQUEST
 
         if (len(str(fields.phone)) != 11 or int(str(fields.phone)[0]) != 7) and fields.phone is not None:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Поле телефона содержит недопустимые символы'), INVALID_REQUEST
 
         pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if fields.email is not None and not re.match(pattern, str(fields.email)):
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Поле email содержит недопустимые символы'), INVALID_REQUEST
 
         if fields.gender not in [0, 1, 2] and fields.gender is not None:
-            return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+            return self.get_error_response('Поле gender содержит недопустимые символы'), INVALID_REQUEST
 
         if fields.birthday is not None:
 
             try:
                 birth_date = datetime.datetime.strptime(str(fields.birthday), "%d.%m.%Y")
                 if datetime.datetime.today().year - birth_date.year >= 70:
-                    return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+                    return self.get_error_response('Дата рождения больше 70 лет'), INVALID_REQUEST
                 date_valid = bool(birth_date)
             except ValueError:
                 date_valid = False
 
             if not date_valid:
-                return ERRORS.get(INVALID_REQUEST), INVALID_REQUEST
+                return self.get_error_response('Дата рождения некорректна'), INVALID_REQUEST
 
         return '', OK
 
@@ -307,7 +316,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
 
-    def do_post(self):
+    def do_POST(self):
         response, code = {}, OK
         context = {"request_id": self.get_request_id(self.headers)}
         request = None
@@ -347,6 +356,10 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--port", action="store", type=int, default=8080)
     parser.add_argument("-l", "--log", action="store", default=None)
     args = parser.parse_args()
+
+    if args.log:
+        open(args.log, 'a').close()
+
     logging.basicConfig(filename=args.log, level=logging.INFO,
                         format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
     server = HTTPServer(("localhost", args.port), MainHTTPHandler)

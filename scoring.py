@@ -4,7 +4,6 @@ import random
 class ScoreResponseStruct:
     def __init__(self, score: float):
         self.score = score
-        self.has: list[str]
 
 
 class InterestResponseStruct(object):
