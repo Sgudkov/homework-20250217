@@ -22,6 +22,7 @@ It returns a score as a JSON response.
 This endpoint returns the interests of a list of clients. It takes the following parameter:
 
 * `client_ids`: a list of client IDs
+* `date`: date in YYYY-MM-DD format
 
 It returns a list of interests as a JSON response.
 
