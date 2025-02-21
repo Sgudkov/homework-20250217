@@ -41,94 +41,228 @@ GENDERS = {
 }
 
 
-@dataclass
-class CharField(object):
+class MyMeta(type):
+    def __call__(cls, val, required, nullable, dct=None):
+        return super().__call__(val, required, nullable, dct)
+
+
+class CharField(metaclass=MyMeta):
     required: bool
     nullable: bool
 
+    def __init__(self, val, required, nullable, dct=None):
+        value = dct
+        if dct is not None and isinstance(dct, dict):
+            try:
+                value = dct.get(val).get(val)
+            except ValueError:
+                pass
 
-class ArgumentsField(CharField):
-    pass
-
-
-class EmailField(CharField):
-    pass
-
-
-class PhoneField(CharField):
-    pass
-
-
-class DateField(CharField):
-    pass
+        if required and value is None:
+            raise ValueError(get_error_response(f"Field {val} is required"))
+        if not nullable and (val is None or value == ""):
+            raise ValueError(get_error_response(f"Field {val} is required"))
+        self.val = value
 
 
-class BirthDayField(CharField):
-    pass
+class ArgumentsField(metaclass=MyMeta):
+    def __init__(self, val, required, nullable, dct=None):
+        value = ""
+        try:
+            value = dct.get(val).get(val)
+        except ValueError:
+            pass
+        if required and not nullable and (value == "" or value is None):
+            raise ValueError(get_error_response(f"Field {val} is required"))
+        if not nullable and (val is None or value == ""):
+            raise ValueError(get_error_response(f"Field {val} is required"))
+        if not isinstance(value, dict):
+            raise ValueError(get_error_response(f"Field {val} must be a dict"))
+        self.val = value
 
 
-class GenderField(CharField):
-    pass
+class EmailField(metaclass=MyMeta):
+    def __init__(self, val, required, nullable, dct=None):
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not re.match(pattern, str(dct)) and dct is not None:
+            raise ValueError(
+                get_error_response("Поле email содержит недопустимые символы")
+            )
+        self.val = dct
 
 
-class ClientIDsField(CharField):
-    pass
+class PhoneField(metaclass=MyMeta):
+    def __init__(self, val, required, nullable, dct=None):
+        if required and dct is None:
+            raise ValueError(get_error_response(f"Field {val} is required"))
+        if dct is not None:
+            if not isinstance(int(dct), int) or (
+                len(str(dct)) != 11 or int(str(dct)[0]) != 7
+            ):
+                raise ValueError(
+                    get_error_response("Поле phone содержит недопустимые символы")
+                )
+        self.val = dct
 
 
-class RequestFieldsParser(object):
+class DateField(metaclass=MyMeta):
+    def __init__(self, val, required, nullable, dct=None):
+
+        date_field = dct
+        if required and date_field is None:
+            raise ValueError(get_error_response(f"Field {val} is required"))
+
+        if dct is not None:
+            try:
+                date_field = date_format_validate(dct)
+            except ValueError:
+                raise ValueError(
+                    get_error_response("Поле date содержит недопустимые символы")
+                )
+        self.val = date_field
+
+
+class BirthDayField(metaclass=MyMeta):
+    def __init__(self, val, required, nullable, dct=None):
+        birthday = dct
+        if birthday is not None:
+            try:
+                birthday = date_format_validate(dct)
+                if datetime.datetime.today().year - birthday.year >= 70:
+                    raise ValueError(get_error_response("Дата рождения больше 70 лет"))
+            except ValueError as e:
+                raise ValueError(e.args[0])
+        self.val = birthday
+
+
+class GenderField(metaclass=MyMeta):
+    def __init__(self, val, required, nullable, dct=None):
+        if dct not in [0, 1, 2] and dct is not None:
+            raise ValueError(
+                get_error_response("Поле gender содержит недопустимые символы")
+            )
+        self.val = dct
+
+
+class ClientIDsField(metaclass=MyMeta):
+    def __init__(self, val, required, nullable, dct=None):
+        if (dct is None or not dct) or (
+            not isinstance(dct, list) or not all(isinstance(i, int) for i in dct)
+        ):
+            raise ValueError(
+                get_error_response("Поле client_ids содержит недопустимые символы")
+            )
+        self.val = dct
+
+
+class ClientsInterestsRequest(object):
     def __init__(self, args):
-        for key, value in self.__dict__.items():
-            self.__dict__[key] = args.setdefault(key, None)
-
-    def get_filled_fields(self) -> list:
-        fields = []
-        for key, value in self.__dict__.items():
-            if value is not None:
-                fields.append(key)
-        return fields[:]
+        self.client_ids = ClientIDsField(
+            required=True, nullable=True, val="client_ids", dct=args.get("client_ids")
+        ).val
+        self.date = DateField(
+            required=False, nullable=True, val="date", dct=args.get("date")
+        ).val
 
 
-class ClientsInterestsRequest(RequestFieldsParser, object):
-    def __init__(self, args):
-        self.client_ids = ClientIDsField(required=True, nullable=True)
-        self.date = DateField(required=False, nullable=True)
-        super().__init__(args=args)
+class OnlineScoreRequest(object):
+    def __init__(self, request):
+        args = request.get("body").get("arguments")
+        self.first_name = CharField(
+            required=False, nullable=True, val="first_name", dct=args.get("first_name")
+        ).val
+        self.last_name = CharField(
+            required=False, nullable=True, val="last_name", dct=args.get("last_name")
+        ).val
+        self.email = EmailField(
+            required=False, nullable=True, val="email", dct=args.get("email")
+        ).val
+        self.phone = PhoneField(
+            required=False, nullable=True, val="phone", dct=args.get("phone")
+        ).val
+        self.birthday = BirthDayField(
+            required=False, nullable=True, val="birthday", dct=args.get("birthday")
+        ).val
+        self.gender = GenderField(
+            required=False, nullable=True, val="gender", dct=args.get("gender")
+        ).val
+
+        count_inconsistency = 0
+
+        if self.phone is None or self.email is None:
+            count_inconsistency += 1
+        if self.first_name is None or self.last_name is None:
+            count_inconsistency += 1
+        if self.gender is None or self.birthday is None:
+            count_inconsistency += 1
+
+        if count_inconsistency == 3:
+            raise ValueError(
+                get_error_response(
+                    "Одна из обязательных пар полей не заполнена", INVALID_REQUEST
+                )
+            )
+
+        if (not str(self.first_name).isalpha() and self.first_name != "") or (
+            not str(self.last_name).isalpha() and self.last_name != ""
+        ):
+            raise ValueError(
+                get_error_response(
+                    "Поле имени или фамилии содержит недопустимые символы",
+                    INVALID_REQUEST,
+                )
+            )
 
 
-class OnlineScoreRequest(RequestFieldsParser, object):
-    def __init__(self, args):
-        self.first_name = CharField(required=False, nullable=True)
-        self.last_name = CharField(required=False, nullable=True)
-        self.email = EmailField(required=False, nullable=True)
-        self.phone = PhoneField(required=False, nullable=True)
-        self.birthday = BirthDayField(required=False, nullable=True)
-        self.gender = GenderField(required=False, nullable=True)
-        super().__init__(args=args)
+class MethodRequest(object):
+    excs: dict = {}
 
-    @property
-    def is_valid(self):
-        pass
-        return True
+    def __init__(self, request):
+        try:
+            body = request.get("body")
+            if bool(body) is False:
+                raise ValueError({INVALID_REQUEST: ERRORS.get(INVALID_REQUEST)})
+        except Exception as e:
+            raise ValueError({INVALID_REQUEST: ERRORS.get(INVALID_REQUEST)})
+        try:
+            self.account = CharField(
+                required=False, nullable=True, val="account", dct={"account": body}
+            ).val
+            self.login = CharField(
+                required=True, nullable=True, val="login", dct={"login": body}
+            ).val
+            self.token = CharField(
+                required=True, nullable=True, val="token", dct={"token": body}
+            ).val
+            self.arguments = ArgumentsField(
+                required=True, nullable=True, val="arguments", dct={"arguments": body}
+            ).val
+            self.method = CharField(
+                required=True, nullable=False, val="method", dct={"method": body}
+            ).val
+        except ValueError as e:
+            raise ValueError({INVALID_REQUEST: ERRORS.get(INVALID_REQUEST)})
 
-
-class MethodRequest(RequestFieldsParser, object):
-    account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=True)
-    token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=False)
-
-    def __init__(self, args):
-        self.account = ""
-        self.login = ""
-        self.token = ""
-        self.arguments = {}
-        self.method = ""
-        super().__init__(args=args)
+        if not check_auth(self):
+            raise ValueError({FORBIDDEN: ERRORS.get(FORBIDDEN)})
 
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
+
+
+def get_error_response(error_text, code=INVALID_REQUEST):
+    class ErrorResponse:
+        def __init__(self, text: str):
+            self.error: str = text
+
+    response = {code: ErrorResponse(error_text).__dict__}
+    logging.error(f"Ошибка: {error_text}")
+    return response
+
+
+def date_format_validate(date) -> datetime.datetime:
+    return datetime.datetime.strptime(str(date), "%d.%m.%Y")
 
 
 class RequestChecker(object):
@@ -148,18 +282,18 @@ class RequestChecker(object):
         logging.error(f"Ошибка: {error_text}")
         return response
 
-    def check_required_fields(self):
-        req_list = self.methodRequest.get_filled_fields()
-        for key, value in MethodRequest.__dict__.items():
-            if hasattr(value, "required") is False:
-                continue
-            if value.required and key not in req_list:
-                return (
-                    self.get_error_response(f"Не заполнено обязательное поле: {key}"),
-                    INVALID_REQUEST,
-                )
-
-        return "", OK
+    # def check_required_fields(self):
+    #     req_list = self.methodRequest.get_filled_fields()
+    #     for key, value in MethodRequest.__dict__.items():
+    #         if hasattr(value, "required") is False:
+    #             continue
+    #         if value.required and key not in req_list:
+    #             return (
+    #                 self.get_error_response(f"Не заполнено обязательное поле: {key}"),
+    #                 INVALID_REQUEST,
+    #             )
+    #
+    #     return "", OK
 
     def check_online_scoring(self):
 
@@ -233,79 +367,10 @@ class RequestChecker(object):
     def check_score_request(self):
         request = self.request.get("body")
 
-        fields_dc: OnlineScoreRequest = request.get("arguments")
-        if fields_dc is None or bool(fields_dc) is False:
-            return (
-                self.get_error_response("Структура arguments не передана в запросе"),
-                INVALID_REQUEST,
-            )
-
-        fields = OnlineScoreRequest(dict(request.get("arguments")))
-
-        count_inconsistency = 0
-
-        if fields.phone is None or fields.email is None:
-            count_inconsistency += 1
-        if fields.first_name is None or fields.last_name is None:
-            count_inconsistency += 1
-        if fields.gender is None or fields.birthday is None:
-            count_inconsistency += 1
-
-        if count_inconsistency == 3:
-            return (
-                self.get_error_response("Одна из обязательных пар полей не заполнена"),
-                INVALID_REQUEST,
-            )
-
-        if not str(fields.first_name).isalpha() or not str(fields.last_name).isalpha():
-            return (
-                self.get_error_response(
-                    "Поле имени или фамилии содержит недопустимые символы"
-                ),
-                INVALID_REQUEST,
-            )
-
-        if (
-            len(str(fields.phone)) != 11 or int(str(fields.phone)[0]) != 7
-        ) and fields.phone is not None:
-            return (
-                self.get_error_response("Поле телефона содержит недопустимые символы"),
-                INVALID_REQUEST,
-            )
-
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        if fields.email is not None and not re.match(pattern, str(fields.email)):
-            return (
-                self.get_error_response("Поле email содержит недопустимые символы"),
-                INVALID_REQUEST,
-            )
-
-        if fields.gender not in [0, 1, 2] and fields.gender is not None:
-            return (
-                self.get_error_response("Поле gender содержит недопустимые символы"),
-                INVALID_REQUEST,
-            )
-
-        if fields.birthday is not None:
-
-            try:
-                birth_date = datetime.datetime.strptime(
-                    str(fields.birthday), "%d.%m.%Y"
-                )
-                if datetime.datetime.today().year - birth_date.year >= 70:
-                    return (
-                        self.get_error_response("Дата рождения больше 70 лет"),
-                        INVALID_REQUEST,
-                    )
-                date_valid = bool(birth_date)
-            except ValueError:
-                date_valid = False
-
-            if not date_valid:
-                return (
-                    self.get_error_response("Дата рождения некорректна"),
-                    INVALID_REQUEST,
-                )
+        try:
+            fields = OnlineScoreRequest(dict(request.get("arguments")))
+        except Exception as e:
+            return e.args[0], INVALID_REQUEST
 
         return "", OK
 
@@ -322,32 +387,39 @@ def check_auth(request):
     return digest == request.token
 
 
+def check_method_request(body):
+    if not body.get("body").get("method") in [
+        "online_score",
+        "clients_interests",
+    ]:
+        return get_error_response("Метода не существует"), INVALID_REQUEST
+    return "", OK
+
+
+def get_filled_fields(obj: object) -> list:
+    fields = []
+    for key, value in obj.__dict__.items():
+        if value is not None:
+            fields.append(key)
+    return fields[:]
+
+
 def method_handler(request, ctx, store):
-    checker = RequestChecker(request)
+    try:
+        method_request = MethodRequest(request)
+    except ValueError as e:
+        v1 = list(e.args[0].values())[0]
+        v2 = list(e.args[0].keys())[0]
+        return v1, v2
 
-    response, code = checker.check_empty_request()
-    if code != OK:
-        return response, code
-
-    response, code = checker.check_required_fields()
-    if code != OK:
-        return response, code
-
-    response, code = checker.check_auth()
-    if code != OK:
-        return response, code
-
-    response, code = checker.check_method_request()
-    if code != OK:
-        return response, code
-
-    match checker.methodRequest.method:  # type: ignore[syntax]
+    match method_request.method:  # type: ignore[syntax]
         case "online_score":
-            response, code = checker.check_online_scoring()
-            if code != OK:
-                return response, code
-            s = OnlineScoreRequest(args=dict(checker.methodRequest.arguments))
-            ctx["has"] = s.get_filled_fields()
+            try:
+                s = OnlineScoreRequest(request)
+            except Exception as e:
+                return e.args[0], INVALID_REQUEST
+
+            ctx["has"] = get_filled_fields(s)
             score = get_score(
                 store=None,
                 phone=s.phone,
@@ -356,16 +428,19 @@ def method_handler(request, ctx, store):
                 gender=s.gender,
                 first_name=s.first_name,
                 last_name=s.last_name,
-                is_admin=check_auth(checker.methodRequest),
+                is_admin=check_auth(method_request),
             )
             return score, OK
         case "clients_interests":
-            response, code = checker.check_clients_interests()
-            if code != OK:
-                return response, code
-            client_ids = checker.methodRequest.arguments.get("client_ids")
-            ctx["nclients"] = len(client_ids)
-            return get_interests(store=None, cid=client_ids), OK
+            try:
+                client_inter = ClientsInterestsRequest(
+                    dict(request.get("body").get("arguments"))
+                )
+            except Exception as e:
+                return e.args[0], INVALID_REQUEST
+            ctx["nclients"] = len(client_inter.client_ids)
+            return get_interests(store=None, cid=client_inter.client_ids), OK
+    return "", OK
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
