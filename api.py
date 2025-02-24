@@ -97,7 +97,7 @@ class PhoneField(metaclass=MyMeta):
             raise ValueError(get_error_response(f"Field {val} is required"))
         if dct is not None:
             if not isinstance(int(dct), int) or (
-                len(str(dct)) != 11 or int(str(dct)[0]) != 7
+                    len(str(dct)) != 11 or int(str(dct)[0]) != 7
             ):
                 raise ValueError(
                     get_error_response("Поле phone содержит недопустимые символы")
@@ -147,7 +147,7 @@ class GenderField(metaclass=MyMeta):
 class ClientIDsField(metaclass=MyMeta):
     def __init__(self, val, required, nullable, dct=None):
         if (dct is None or not dct) or (
-            not isinstance(dct, list) or not all(isinstance(i, int) for i in dct)
+                not isinstance(dct, list) or not all(isinstance(i, int) for i in dct)
         ):
             raise ValueError(
                 get_error_response("Поле client_ids содержит недопустимые символы")
@@ -204,7 +204,7 @@ class OnlineScoreRequest(object):
             )
 
         if (not str(self.first_name).isalpha() and self.first_name != "") or (
-            not str(self.last_name).isalpha() and self.last_name != ""
+                not str(self.last_name).isalpha() and self.last_name != ""
         ):
             raise ValueError(
                 get_error_response(
@@ -263,116 +263,6 @@ def get_error_response(error_text, code=INVALID_REQUEST):
 
 def date_format_validate(date) -> datetime.datetime:
     return datetime.datetime.strptime(str(date), "%d.%m.%Y")
-
-
-class RequestChecker(object):
-    def __init__(self, request):
-        self.request = request
-        try:
-            self.methodRequest = MethodRequest(args=dict(self.request.get("body")))
-        except Exception as e:
-            self.methodRequest = MethodRequest(args={})
-
-    def get_error_response(self, error_text):
-        class ErrorResponse:
-            def __init__(self, text: str):
-                self.error: str = text
-
-        response = ErrorResponse(error_text).__dict__
-        logging.error(f"Ошибка: {error_text}")
-        return response
-
-    # def check_required_fields(self):
-    #     req_list = self.methodRequest.get_filled_fields()
-    #     for key, value in MethodRequest.__dict__.items():
-    #         if hasattr(value, "required") is False:
-    #             continue
-    #         if value.required and key not in req_list:
-    #             return (
-    #                 self.get_error_response(f"Не заполнено обязательное поле: {key}"),
-    #                 INVALID_REQUEST,
-    #             )
-    #
-    #     return "", OK
-
-    def check_online_scoring(self):
-
-        response, code = self.check_score_request()
-        if code != OK:
-            return response, code
-
-        return "", OK
-
-    def check_clients_interests(self):
-        request = self.request.get("body")
-        fields = ClientsInterestsRequest(request.get("arguments"))
-
-        if (fields.client_ids is None or not fields.client_ids) or type(
-            fields.client_ids
-        ) != list:
-            return (
-                self.get_error_response(
-                    "Поле client_ids не передано в запросе или пустое"
-                ),
-                INVALID_REQUEST,
-            )
-
-        if all(type(i) == int for i in fields.client_ids) is False:
-            return (
-                self.get_error_response("Значения client_ids должны быть числами"),
-                INVALID_REQUEST,
-            )
-
-        if fields.date is not None:
-            try:
-                date_valid = bool(
-                    datetime.datetime.strptime(str(fields.date), "%d.%m.%Y")
-                )
-            except ValueError:
-                date_valid = False
-
-            if not date_valid:
-                return (
-                    self.get_error_response("Дата должна быть в формате DD.MM.YYYY"),
-                    INVALID_REQUEST,
-                )
-
-        return "", OK
-
-    def check_empty_request(self):
-        try:
-            if not bool(self.request.get("body")):
-                return self.get_error_response("Пустой запрос"), INVALID_REQUEST
-        except Exception as e:
-            return self.get_error_response("Пустой запрос"), INVALID_REQUEST
-        return "", OK
-
-    def check_auth(self):
-        if (self.methodRequest.login is None or self.methodRequest.login == "") or (
-            self.methodRequest.account is None or self.methodRequest.account == ""
-        ):
-            return ERRORS.get(FORBIDDEN), FORBIDDEN
-        if not check_auth(self.methodRequest):
-            return ERRORS.get(FORBIDDEN), FORBIDDEN
-        return "", OK
-
-    def check_method_request(self):
-        if not self.request.get("body").get("method") in [
-            "online_score",
-            "clients_interests",
-        ]:
-            return self.get_error_response("Метода не существует"), INVALID_REQUEST
-        return "", OK
-
-    def check_score_request(self):
-        request = self.request.get("body")
-
-        try:
-            fields = OnlineScoreRequest(dict(request.get("arguments")))
-        except Exception as e:
-            return e.args[0], INVALID_REQUEST
-
-        return "", OK
 
 
 def check_auth(request):
